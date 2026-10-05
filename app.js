@@ -811,14 +811,16 @@ function renderQA(topic) {
   };
   sayBtn.onclick = () => { sfx.tap(); ask(); };
 
-  // Falsche Antworten kommen aus anderen Fragen desselben Themas.
+  // Falsche Antworten kommen aus den ANDEREN Fragen-Themen: innerhalb eines Themas wären sie
+  // oft auch sinnvoll (🍪 auf „Do you want to eat?“) – das wäre unfair. item.avoid schließt
+  // die restlichen Überschneidungen aus.
   function distractors(accepted) {
-    const taken = new Set(accepted.map((a) => fill(a.pic)).concat(NO));
+    const taken = new Set(accepted.map((a) => fill(a.pic)).concat(NO, item.avoid || []));
     const pool = [];
-    topic.items.forEach((it) => it.answers.forEach((a) => {
+    QA_TOPICS.filter((t) => t !== topic).forEach((t) => t.items.forEach((it) => it.answers.forEach((a) => {
       const p = fill(a.pic);
       if (!taken.has(p)) { taken.add(p); pool.push(a); }
-    }));
+    })));
     return shuffle(pool);
   }
 

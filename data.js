@@ -184,7 +184,8 @@ const ENCOURAGE = ['Hmm, try again!', 'Almost! Try again.', 'Good try! One more 
 // Jede Frage hat 1–2 richtige Antworten (bei Ja/Nein-Fragen ist beides richtig).
 // Das Ja-Bild ist pro Frage verschieden (🥶 bei "cold", 😋 bei "hungry") – so muss das Kind
 // die Frage wirklich verstehen und kann nicht einfach immer 👍 tippen.
-// Falsche Auswahlmöglichkeiten werden aus den anderen Fragen desselben Themas gezogen.
+// Falsche Auswahlmöglichkeiten kommen aus den anderen Fragen-Themen; avoid schließt Bilder aus,
+// die als Antwort auch passen würden.
 const NO = '🙅';
 const yn = (q, de, yesPic, yes, no) => ({ q, de, answers: [{ pic: yesPic, en: yes }, { pic: NO, en: no }] });
 
@@ -194,20 +195,20 @@ const QA_TOPICS = [
     items: [
       { q: "What's your name?", de: 'Wie heißt du?', answers: [{ pic: '🙋‍♂️', en: 'My name is {name}.' }] },
       { q: 'How old are you?', de: 'Wie alt bist du?', answers: [{ pic: '{agePic}', en: "I'm {age}!" }] },
-      { q: 'How are you?', de: 'Wie geht es dir?', answers: [{ pic: '😄', en: "I'm good, thank you!" }] },
+      { q: 'How are you?', de: 'Wie geht es dir?', answers: [{ pic: '😄', en: "I'm good, thank you!" }], avoid: ['😋', '😍', '😴', '🥶'] },
       { q: 'Where are you from?', de: 'Woher kommst du?', answers: [{ pic: '🇩🇪', en: "I'm from Germany!" }] },
-      yn('Do you like cars?', 'Magst du Autos?', '🚗', 'Yes! I love cars!', "No, I don't."),
+      { ...yn('Do you like cars?', 'Magst du Autos?', '🚗', 'Yes! I love cars!', "No, I don't."), avoid: ['🚂'] },
       yn('Do you speak English?', 'Sprichst du Englisch?', '🇺🇸', 'Yes, a little!', 'No, not yet.'),
     ],
   },
   {
     id: 'qa-food', stage: 3, type: 'qa', icon: '🍽️', de: 'Hunger & Durst',
     items: [
-      yn('Are you hungry?', 'Hast du Hunger?', '😋', "Yes, I'm hungry!", "No, I'm not hungry."),
+      { ...yn('Are you hungry?', 'Hast du Hunger?', '😋', "Yes, I'm hungry!", "No, I'm not hungry."), avoid: ['😄'] },
       yn('Are you thirsty?', 'Hast du Durst?', '🥤', "Yes, I'm thirsty!", 'No, thank you.'),
       yn('Do you want to eat?', 'Möchtest du essen?', '🍽️', 'Yes, please!', 'No, thank you.'),
       yn('Do you want more?', 'Möchtest du noch mehr?', '➕', 'More, please!', "No, thank you. I'm full."),
-      yn('Is it yummy?', 'Schmeckt es?', '😍', "Yes, it's yummy!", "No, I don't like it."),
+      { ...yn('Is it yummy?', 'Schmeckt es?', '😍', "Yes, it's yummy!", "No, I don't like it."), avoid: ['😄'] },
       { q: 'Do you want milk or water?', de: 'Möchtest du Milch oder Wasser?', answers: [{ pic: '🥛', en: 'Milk, please!' }, { pic: '💧', en: 'Water, please!' }] },
       { q: 'Do you want a cookie or an apple?', de: 'Möchtest du einen Keks oder einen Apfel?', answers: [{ pic: '🍪', en: 'A cookie, please!' }, { pic: '🍎', en: 'An apple, please!' }] },
     ],
@@ -215,12 +216,12 @@ const QA_TOPICS = [
   {
     id: 'qa-outside', stage: 3, type: 'qa', icon: '❄️', de: 'Draußen & Winter',
     items: [
-      yn('Do you want to go outside?', 'Möchtest du rausgehen?', '🌳', "Yes, let's go outside!", 'No, I want to stay inside.'),
+      { ...yn('Do you want to go outside?', 'Möchtest du rausgehen?', '🌳', "Yes, let's go outside!", 'No, I want to stay inside.'), avoid: ['🚗', '🚂'] },
       yn('Are you cold?', 'Ist dir kalt?', '🥶', "Yes, I'm cold!", "No, I'm warm."),
       yn('Do you want to build a snowman?', 'Möchtest du einen Schneemann bauen?', '⛄', "Yes! Let's build a snowman!", 'No, thank you.'),
       yn('Are you tired?', 'Bist du müde?', '😴', "Yes, I'm tired.", "No, I'm not tired!"),
       yn('Do you need to go to the bathroom?', 'Musst du aufs Klo?', '🚽', 'Yes, I need to go!', "No, I'm okay."),
-      yn('Do you want to play?', 'Möchtest du spielen?', '🧸', "Yes! Let's play!", 'Not now, thank you.'),
+      { ...yn('Do you want to play?', 'Möchtest du spielen?', '🧸', "Yes! Let's play!", 'Not now, thank you.'), avoid: ['🚗', '🚂'] },
       { q: 'Do you want to play with cars or trains?', de: 'Willst du mit Autos oder Zügen spielen?', answers: [{ pic: '🚗', en: 'Cars, please!' }, { pic: '🚂', en: 'Trains, please!' }] },
     ],
   },
