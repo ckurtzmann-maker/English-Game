@@ -3,6 +3,7 @@
 //       pic = Emoji, oder color = Farbe für das gezeichnete Auto, count = Anzahl Autos.
 //       say = kurzer Beispielsatz (Sprachbausteine statt Einzelwörter).
 
+// Stufe 1: Wörter verstehen.
 const TOPICS = [
   {
     id: 'hello', icon: '👋', en: 'Hello!', de: 'Hallo & Danke',
@@ -161,7 +162,7 @@ const PHRASES = [
   { en: 'Can I have water, please?', de: 'Kann ich Wasser haben, bitte?', pic: '💧' },
   { en: 'I need to go to the bathroom.', de: 'Ich muss aufs Klo.', pic: '🚽' },
   { en: 'Can I play?', de: 'Darf ich mitspielen?', pic: '⚽' },
-  { en: 'I am four years old.', de: 'Ich bin vier Jahre alt.', pic: '4️⃣' },
+  { en: 'I am {age} years old.', de: 'Ich bin {age} Jahre alt.', pic: '{agePic}' },
   { en: 'Good morning!', de: 'Guten Morgen!', pic: '🌅' },
   { en: 'Good night!', de: 'Gute Nacht!', pic: '🌙' },
   { en: 'I love you!', de: 'Ich hab dich lieb!', pic: '❤️' },
@@ -179,4 +180,108 @@ const PRAISE = ['Great job!', 'Awesome!', 'You did it!', 'Super!', 'Well done!',
 
 const ENCOURAGE = ['Hmm, try again!', 'Almost! Try again.', 'Good try! One more time.', 'Oops! Try another one.'];
 
-const STARS_TO_MICHIGAN = 120;
+// Stufe 3: Fragen verstehen und antworten.
+// Jede Frage hat 1–2 richtige Antworten (bei Ja/Nein-Fragen ist beides richtig).
+// Das Ja-Bild ist pro Frage verschieden (🥶 bei "cold", 😋 bei "hungry") – so muss das Kind
+// die Frage wirklich verstehen und kann nicht einfach immer 👍 tippen.
+// Falsche Auswahlmöglichkeiten werden aus den anderen Fragen desselben Themas gezogen.
+const NO = '🙅';
+const yn = (q, de, yesPic, yes, no) => ({ q, de, answers: [{ pic: yesPic, en: yes }, { pic: NO, en: no }] });
+
+const QA_TOPICS = [
+  {
+    id: 'qa-me', stage: 3, type: 'qa', icon: '🙋', de: 'Über mich',
+    items: [
+      { q: "What's your name?", de: 'Wie heißt du?', answers: [{ pic: '🙋‍♂️', en: 'My name is {name}.' }] },
+      { q: 'How old are you?', de: 'Wie alt bist du?', answers: [{ pic: '{agePic}', en: "I'm {age}!" }] },
+      { q: 'How are you?', de: 'Wie geht es dir?', answers: [{ pic: '😄', en: "I'm good, thank you!" }] },
+      { q: 'Where are you from?', de: 'Woher kommst du?', answers: [{ pic: '🇩🇪', en: "I'm from Germany!" }] },
+      yn('Do you like cars?', 'Magst du Autos?', '🚗', 'Yes! I love cars!', "No, I don't."),
+      yn('Do you speak English?', 'Sprichst du Englisch?', '🇺🇸', 'Yes, a little!', 'No, not yet.'),
+    ],
+  },
+  {
+    id: 'qa-food', stage: 3, type: 'qa', icon: '🍽️', de: 'Hunger & Durst',
+    items: [
+      yn('Are you hungry?', 'Hast du Hunger?', '😋', "Yes, I'm hungry!", "No, I'm not hungry."),
+      yn('Are you thirsty?', 'Hast du Durst?', '🥤', "Yes, I'm thirsty!", 'No, thank you.'),
+      yn('Do you want to eat?', 'Möchtest du essen?', '🍽️', 'Yes, please!', 'No, thank you.'),
+      yn('Do you want more?', 'Möchtest du noch mehr?', '➕', 'More, please!', "No, thank you. I'm full."),
+      yn('Is it yummy?', 'Schmeckt es?', '😍', "Yes, it's yummy!", "No, I don't like it."),
+      { q: 'Do you want milk or water?', de: 'Möchtest du Milch oder Wasser?', answers: [{ pic: '🥛', en: 'Milk, please!' }, { pic: '💧', en: 'Water, please!' }] },
+      { q: 'Do you want a cookie or an apple?', de: 'Möchtest du einen Keks oder einen Apfel?', answers: [{ pic: '🍪', en: 'A cookie, please!' }, { pic: '🍎', en: 'An apple, please!' }] },
+    ],
+  },
+  {
+    id: 'qa-outside', stage: 3, type: 'qa', icon: '❄️', de: 'Draußen & Winter',
+    items: [
+      yn('Do you want to go outside?', 'Möchtest du rausgehen?', '🌳', "Yes, let's go outside!", 'No, I want to stay inside.'),
+      yn('Are you cold?', 'Ist dir kalt?', '🥶', "Yes, I'm cold!", "No, I'm warm."),
+      yn('Do you want to build a snowman?', 'Möchtest du einen Schneemann bauen?', '⛄', "Yes! Let's build a snowman!", 'No, thank you.'),
+      yn('Are you tired?', 'Bist du müde?', '😴', "Yes, I'm tired.", "No, I'm not tired!"),
+      yn('Do you need to go to the bathroom?', 'Musst du aufs Klo?', '🚽', 'Yes, I need to go!', "No, I'm okay."),
+      yn('Do you want to play?', 'Möchtest du spielen?', '🧸', "Yes! Let's play!", 'Not now, thank you.'),
+      { q: 'Do you want to play with cars or trains?', de: 'Willst du mit Autos oder Zügen spielen?', answers: [{ pic: '🚗', en: 'Cars, please!' }, { pic: '🚂', en: 'Trains, please!' }] },
+    ],
+  },
+];
+
+// Stufe 4: Anweisungen verstehen – das hört ein Kind in der Gastfamilie am häufigsten.
+// type 'pick': richtiges Bild antippen. type 'move': selbst mitmachen (Bewegung), dann 👍.
+const ACTION_TOPICS = [
+  {
+    id: 'do-home', stage: 4, type: 'pick', icon: '🧥', de: 'Anziehen & Alltag',
+    items: [
+      { cmd: 'Put on your jacket!', de: 'Zieh deine Jacke an!', pic: '🧥' },
+      { cmd: 'Put on your shoes!', de: 'Zieh deine Schuhe an!', pic: '👟' },
+      { cmd: 'Put on your hat!', de: 'Setz deine Mütze auf!', pic: '🧢' },
+      { cmd: 'Put on your gloves!', de: 'Zieh deine Handschuhe an!', pic: '🧤' },
+      { cmd: 'Put on your boots!', de: 'Zieh deine Stiefel an!', pic: '🥾' },
+      { cmd: 'Wash your hands, please!', de: 'Wasch dir bitte die Hände!', pic: '🧼' },
+      { cmd: 'Brush your teeth!', de: 'Putz dir die Zähne!', pic: '🪥' },
+      { cmd: 'Dinner is ready!', de: 'Das Essen ist fertig!', pic: '🍽️' },
+      { cmd: 'Time for bed!', de: 'Ab ins Bett!', pic: '🛏️' },
+      { cmd: 'Time for a bath!', de: 'Zeit zum Baden!', pic: '🛁' },
+      { cmd: 'Clean up your toys, please!', de: 'Räum bitte deine Spielsachen auf!', pic: '🧸' },
+      { cmd: 'Get in the car!', de: 'Steig ins Auto!', pic: '🚗' },
+    ],
+  },
+  {
+    id: 'do-move', stage: 4, type: 'move', icon: '🤸', de: 'Mach mit!',
+    items: [
+      { cmd: 'Jump!', de: 'Spring!', pic: '🦘' },
+      { cmd: 'Clap your hands!', de: 'Klatsch in die Hände!', pic: '👏' },
+      { cmd: 'Stand up!', de: 'Steh auf!', pic: '🧍' },
+      { cmd: 'Sit down, please!', de: 'Setz dich bitte hin!', pic: '🪑' },
+      { cmd: 'Touch your nose!', de: 'Fass dir an die Nase!', pic: '👃' },
+      { cmd: 'Turn around!', de: 'Dreh dich um!', pic: '🔄' },
+      { cmd: 'Wave hello!', de: 'Wink mal!', pic: '👋' },
+      { cmd: 'Stomp your feet!', de: 'Stampf mit den Füßen!', pic: '🦶' },
+      { cmd: 'Come here, please!', de: 'Komm bitte her!', pic: '🏃' },
+      { cmd: 'Stop! Freeze!', de: 'Stopp! Erstarren!', pic: '✋' },
+      { cmd: 'Drive like a car! Vroom vroom!', de: 'Fahr wie ein Auto!', pic: '🚗' },
+      { cmd: 'Fly like an airplane!', de: 'Flieg wie ein Flugzeug!', pic: '✈️' },
+    ],
+  },
+];
+
+// Stufen werden über Sterne freigeschaltet (im Eltern-Bereich auch sofort möglich).
+const STAGES = [
+  { n: 1, de: 'Wörter', stars: 0 },
+  { n: 2, de: 'Sätze sagen', stars: 0 },
+  { n: 3, de: 'Fragen & Antworten', stars: 60 },
+  { n: 4, de: 'Anweisungen & Mitmachen', stars: 150 },
+];
+
+// Wer fragt? Verschiedene Figuren mit unterschiedlicher Stimmhöhe – wie in einer echten Familie.
+const HOSTS = [
+  { pic: '👩', pitch: 1.15 },
+  { pic: '👨', pitch: 0.85 },
+  { pic: '👧', pitch: 1.45 },
+  { pic: '👵', pitch: 1.05 },
+  { pic: '👴', pitch: 0.75 },
+];
+
+const AGE_WORDS = { 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six', 7: 'seven' };
+
+const STARS_TO_MICHIGAN = 600;

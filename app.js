@@ -18,7 +18,7 @@ const DEFAULT_STATE = {
   topics: {},   // id -> { look: bool, listen: Anzahl Runden, speak: Anzahl }
   words: {},    // "topic:en" -> { seen, right, miss }
   days: {},     // "YYYY-MM-DD" -> Sterne an diesem Tag
-  settings: { name: '', tripDate: '2026-12-20', german: true, rate: 0.8, voice: '' },
+  settings: { name: '', age: 4, tripDate: '2026-12-20', german: true, rate: 0.8, voice: '', unlockAll: false },
 };
 
 let state = loadState();
@@ -36,8 +36,9 @@ function save() {
 function topicState(id) {
   return state.topics[id] || (state.topics[id] = { look: false, listen: 0, speak: 0 });
 }
+const itemKey = (w) => w.en || w.q || w.cmd;
 function wordStat(topicId, w) {
-  const k = topicId + ':' + w.en;
+  const k = topicId + ':' + itemKey(w);
   return state.words[k] || (state.words[k] = { seen: 0, right: 0, miss: 0 });
 }
 function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
@@ -48,7 +49,11 @@ const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i >
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const childName = () => state.settings.name.trim() || 'Buddy';
-const fill = (s) => s.replace(/\{name\}/g, childName());
+const childAge = () => +state.settings.age || 4;
+const fill = (s) => String(s)
+  .replace(/\{name\}/g, childName())
+  .replace(/\{agePic\}/g, childAge() <= 9 ? `${childAge()}\uFE0F\u20E3` : '🎂')
+  .replace(/\{age\}/g, AGE_WORDS[childAge()] || String(childAge()));
 
 function h(html) {
   const t = document.createElement('template');
@@ -88,7 +93,7 @@ function pickVoice(lang) {
 
 let speakToken = 0;
 let currentUtterance = null; // Referenz halten – Safari verliert sonst onend (Garbage Collection)
-function speak(text, { lang = 'en', rate } = {}) {
+function speak(text, { lang = 'en', rate, pitch = 1.1 } = {}) {
   return new Promise((resolve) => {
     if (!synth) { resolve(); return; }
     const token = ++speakToken;
@@ -97,7 +102,7 @@ function speak(text, { lang = 'en', rate } = {}) {
     if (v) u.voice = v;
     u.lang = v ? v.lang : (lang === 'de' ? 'de-DE' : 'en-US');
     u.rate = rate || (lang === 'de' ? 0.95 : state.settings.rate);
-    u.pitch = 1.1;
+    u.pitch = pitch;
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(token === speakToken); } };
     u.onend = finish;
@@ -181,7 +186,7 @@ function carSVG(color) {
 function picHTML(w) {
   if (w.color) return carSVG(w.color);
   if (w.count) return `<div class="count-cars">${'🚗'.repeat(w.count)}</div>`;
-  return esc(w.pic);
+  return esc(fill(w.pic));
 }
 
 // ---------- Belohnungen ----------
@@ -319,42 +324,96 @@ function renderStart() {
 }
 
 // ---------- Startseite ----------
-function suggestedTopic() {
-  return TOPICS.find((t) => { const s = topicState(t.id); return !(s.look && s.listen > 0 && s.speak > 0); }) || null;
+const ALL_TOPICS = [...TOPICS, ...QA_TOPICS, ...ACTION_TOPICS];
+const PHRASES_TILE = { id: '__phrases', stage: 2, type: 'phrases', icon: '🦜', de: 'Sätze' };
+const stageOf = (t) => t.stage || 1;
+const stageInfo = (n) => STAGES.find((s) => s.n === n);
+const isUnlocked = (t) => state.settings.unlockAll || state.stars >= stageInfo(stageOf(t)).stars;
+
+function isDone(t) {
+  const s = topicState(t.id);
+  if (t.type === 'phrases') return s.speak >= 2;
+  if (t.type) return s.listen >= 2; // Fragen, Anweisungen, Mitmachen: 2× gespielt
+  return s.look && s.listen > 0 && s.speak > 0;
 }
 
-function medals(id) {
-  const s = state.topics[id];
+// Vorschlag: zuerst die höchste freigeschaltete Stufe – dort liegt das eigentliche Ziel.
+function suggestedTopic() {
+  const open = [...ALL_TOPICS, PHRASES_TILE].filter(isUnlocked);
+  for (const n of [4, 3, 2, 1]) {
+    const t = open.find((t) => stageOf(t) === n && !isDone(t));
+    if (t) return t;
+  }
+  return null;
+}
+
+function medals(t) {
+  const s = state.topics[t.id];
   if (!s) return '';
+  if (t.type === 'phrases') return '⭐'.repeat(Math.min(s.speak, 3));
+  if (t.type) return '⭐'.repeat(Math.min(s.listen, 3));
   return (s.look ? '👀' : '') + (s.listen ? '👂' : '') + (s.speak ? '🦜' : '');
 }
+
+function openTopic(t) {
+  if (t.type === 'phrases') show(renderSpeak, null);
+  else if (t.type === 'qa') show(renderQA, t);
+  else if (t.type === 'pick') show(renderListen, t);
+  else if (t.type === 'move') show(renderMove, t);
+  else show(renderTopic, t);
+}
+// Zurück: Wort-Themen haben eine eigene Seite mit drei Spielen, die anderen gehen direkt heim.
+const backTo = (t) => (t && !t.type ? () => show(renderTopic, t) : () => show(renderHome));
 
 function renderHome(greet = false) {
   $app.appendChild(topbar({ parent: true }));
   $app.appendChild(h(journeyHTML()));
   const next = suggestedTopic();
-  const grid = h(`<div class="grid">
-    ${TOPICS.map((t) => `
-      <button class="big-btn tile ${next && next.id === t.id ? 'next' : ''}" data-id="${t.id}" aria-label="${esc(t.de)}">
-        <span class="medals">${medals(t.id)}</span>
-        <span class="pic">${t.icon}</span>
-        <span class="label">${esc(t.de)}</span>
-      </button>`).join('')}
-    <button class="big-btn tile phrases" data-id="__phrases" aria-label="Sätze sprechen">
-      <span class="medals">${state.topics.__phrases && state.topics.__phrases.speak ? '🦜' : ''}</span>
-      <span class="pic">🦜</span>
-      <span class="label">Sätze</span>
-    </button>
-  </div>`);
-  grid.querySelectorAll('.tile').forEach((b) => {
+  const all = [...TOPICS, PHRASES_TILE, ...QA_TOPICS, ...ACTION_TOPICS];
+  const sections = STAGES.map((st) => {
+    const ts = all.filter((t) => stageOf(t) === st.n);
+    const open = ts.length && isUnlocked(ts[0]);
+    const missing = Math.max(0, st.stars - state.stars);
+    return `
+      <div class="stage ${open ? '' : 'locked'}">
+        <div class="stage-head"><span class="stage-n">${st.n}</span>${esc(st.de)}${open ? '' : ` <span class="stage-lock">🔒 noch ${missing} ⭐</span>`}</div>
+        <div class="grid">
+        ${ts.map((t) => `
+          <button class="big-btn tile ${t.type === 'phrases' ? 'phrases' : ''} ${next && next.id === t.id ? 'next' : ''}" data-id="${t.id}" aria-label="${esc(t.de)}">
+            <span class="medals">${open ? medals(t) : '🔒'}</span>
+            <span class="pic">${t.icon}</span>
+            <span class="label">${esc(t.de)}</span>
+          </button>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+  const frag = h(`<div class="stages">${sections}</div>`);
+  frag.querySelectorAll('.tile').forEach((b) => {
     b.onclick = () => {
+      const t = all.find((t) => t.id === b.dataset.id);
+      if (!isUnlocked(t)) {
+        sfx.soft();
+        b.classList.remove('wiggle'); void b.offsetWidth; b.classList.add('wiggle');
+        speak(`Collect ${stageInfo(stageOf(t)).stars - state.stars} more stars!`);
+        return;
+      }
       sfx.tap();
-      if (b.dataset.id === '__phrases') { show(renderSpeak, null); return; }
-      show(renderTopic, TOPICS.find((t) => t.id === b.dataset.id));
+      openTopic(t);
     };
   });
-  $app.appendChild(grid);
-  if (greet) {
+  $app.appendChild(frag);
+  // Neue Stufe freigeschaltet? Einmal feiern und dorthin scrollen.
+  const reached = Math.max(...STAGES.filter((st) => state.stars >= st.stars).map((st) => st.n));
+  const announce = reached > (state.stageSeen || 2) && !state.settings.unlockAll;
+  if (announce) {
+    state.stageSeen = reached;
+    save();
+    confetti(18);
+    sfx.fanfare();
+    setTimeout(() => speak(reached === 3 ? `Wow, ${childName()}! New game! Now people ask you questions!` : `Wow, ${childName()}! New game! Let's move and play!`), 400);
+    const tile = $app.querySelector('.tile.next');
+    if (tile) setTimeout(() => tile.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
+  } else if (greet) {
     const p = state.stars / STARS_TO_MICHIGAN;
     const line = p >= 1 ? `Hello ${childName()}! We made it to Michigan!` :
       state.stars === 0 ? `Hello ${childName()}! Let's fly to Michigan!` :
@@ -460,8 +519,8 @@ const ROUNDS = 6;
 // Wörter mit vielen Fehlern / wenig Übung kommen häufiger dran.
 function pickTarget(topic, last) {
   const weighted = [];
-  topic.words.forEach((w) => {
-    if (last && w.en === last.en) return;
+  (topic.words || topic.items).forEach((w) => {
+    if (last && itemKey(w) === itemKey(last)) return;
     const st = wordStat(topic.id, w);
     const weight = 1 + st.miss * 2 + Math.max(0, 3 - st.right);
     for (let i = 0; i < weight; i++) weighted.push(w);
@@ -469,6 +528,7 @@ function pickTarget(topic, last) {
   return rand(weighted);
 }
 function questionFor(topic, w) {
+  if (topic.type === 'pick') return w.cmd;
   if (topic.id === 'hello' || topic.id === 'actions' || topic.id === 'feelings') return `Find: ${w.en}!`;
   if (topic.id === 'colors') return `Where is the ${w.en} car?`;
   if (topic.id === 'numbers') return `Where are ${w.en} ${w.count === 1 ? 'car' : 'cars'}?`;
@@ -479,8 +539,11 @@ function questionFor(topic, w) {
 
 function renderListen(topic) {
   const s = topicState(topic.id);
+  const pickMode = topic.type === 'pick';
+  // Anweisungen nutzen dasselbe Spiel: Satz hören → passendes Bild antippen.
+  const words = pickMode ? topic.items.map((i) => ({ ...i, en: i.cmd, say: i.cmd })) : topic.words;
   // Schwierigkeit wächst langsam: erst 2, dann 3, dann 4 Bilder.
-  const nOpts = Math.min(topic.words.length, s.listen === 0 ? 2 : s.listen < 3 ? 3 : 4);
+  const nOpts = Math.min(words.length, s.listen === 0 ? 2 : s.listen < 3 ? 3 : 4);
   let round = 0;
   let target = null;
   let firstTry = true;
@@ -488,7 +551,7 @@ function renderListen(topic) {
   let alive = true;
   cleanup = () => { alive = false; };
 
-  $app.appendChild(topbar({ back: () => show(renderTopic, topic) }));
+  $app.appendChild(topbar({ back: backTo(topic) }));
   $app.appendChild(h(`
     <div class="road"><span class="racer">🏎️</span><span class="finish">🏁</span></div>
     <div class="prompt"><button class="big-btn say-again" aria-label="Nochmal hören">🔊</button></div>
@@ -512,13 +575,13 @@ function renderListen(topic) {
     if (round >= ROUNDS) {
       s.listen++;
       save();
-      celebrate(() => show(renderTopic, topic));
+      celebrate(backTo(topic));
       return;
     }
-    target = pickTarget(topic, target);
+    target = pickTarget({ ...topic, words }, target);
     firstTry = true;
     locked = false;
-    const others = shuffle(topic.words.filter((w) => w.en !== target.en && picHTML(w) !== picHTML(target))).slice(0, nOpts - 1);
+    const others = shuffle(words.filter((w) => w.en !== target.en && picHTML(w) !== picHTML(target))).slice(0, nOpts - 1);
     const choices = shuffle([target, ...others]);
     opts.innerHTML = choices.map((w) => `<button class="big-btn option" data-en="${esc(w.en)}" aria-label="${esc(w.en)}">${picHTML(w)}</button>`).join('');
     opts.querySelectorAll('.option').forEach((b) => { b.onclick = () => choose(b); });
@@ -540,7 +603,7 @@ function renderListen(topic) {
       moveRacer();
       racer.classList.remove('zoom'); void racer.offsetWidth; racer.classList.add('zoom');
       setTimeout(() => sfx.vroom(), 250);
-      await speak(`${rand(PRAISE)} ${target.say}`);
+      await speak(pickMode ? rand(PRAISE) : `${rand(PRAISE)} ${target.say}`);
       await wait(400);
       next();
     } else {
@@ -549,13 +612,13 @@ function renderListen(topic) {
       btn.classList.add('wrong');
       btn.disabled = true;
       sfx.soft();
-      const wrongW = topic.words.find((w) => w.en === btn.dataset.en);
+      const wrongW = words.find((w) => w.en === btn.dataset.en);
       const tries = opts.querySelectorAll('.option.wrong').length;
       if (tries >= 1 && !firstTry) {
         opts.querySelector(`[data-en="${CSS.escape(target.en)}"]`).classList.add('hint');
       }
       firstTry = false;
-      await speak(`That's the ${wrongW.en}. ${rand(ENCOURAGE)}`);
+      await speak(pickMode ? rand(ENCOURAGE) : `That's the ${wrongW.en}. ${rand(ENCOURAGE)}`);
       if (alive && !locked) await ask();
     }
   }
@@ -563,27 +626,64 @@ function renderListen(topic) {
   setTimeout(next, 300);
 }
 
-// ---------- Spiel 3: Papagei / Nachsprechen ----------
+// ---------- Aufnahme: selbst sprechen → sich selbst hören ----------
 // Kein automatisches Bewerten (Spracherkennung versteht Kinder schlecht und
-// würde frustrieren). Stattdessen: hören → selbst aufnehmen → sich selbst hören → Stern.
+// würde frustrieren). Stattdessen: aufnehmen → abspielen → Stern.
+const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+
+function attachRecorder(micBtn, { isAlive, onDone }) {
+  let rec = null;
+  let stream = null;
+  const closeMic = () => { if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; } };
+  micBtn.onclick = async () => {
+    if (rec && rec.state === 'recording') { rec.stop(); return; }
+    stopSpeaking();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (e) {
+      micBtn.remove(); // kein Mikro erlaubt → nur Daumen-hoch-Weg
+      return;
+    }
+    const chunks = [];
+    rec = new MediaRecorder(stream);
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = async () => {
+      micBtn.classList.remove('recording');
+      micBtn.textContent = '🎤';
+      // Mikro schließen – sonst ist die Wiedergabe auf dem iPad sehr leise.
+      closeMic();
+      if (!isAlive() || !chunks.length) return;
+      const url = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || 'audio/mp4' }));
+      await wait(150);
+      playback.onended = () => { playback.onended = null; URL.revokeObjectURL(url); onDone(); };
+      playback.src = url;
+      const p = playback.play();
+      if (p && p.catch) p.catch(() => { playback.onended = null; onDone(); });
+    };
+    rec.start();
+    micBtn.classList.add('recording');
+    micBtn.textContent = '⏹️';
+    setTimeout(() => { if (rec && rec.state === 'recording') rec.stop(); }, 5000);
+  };
+  return () => {
+    if (rec && rec.state === 'recording') { rec.onstop = null; rec.stop(); }
+    closeMic();
+    playback.onended = null;
+    playback.pause();
+  };
+}
+
+// ---------- Spiel 3: Papagei / Nachsprechen ----------
 function renderSpeak(topic) {
   const isPhrases = !topic;
   const id = isPhrases ? '__phrases' : topic.id;
   const items = isPhrases
-    ? shuffle(PHRASES).slice(0, 5).map((p) => ({ en: fill(p.en), de: fill(p.de), pic: p.pic }))
+    ? shuffle(PHRASES).slice(0, 5).map((p) => ({ en: fill(p.en), de: fill(p.de), pic: fill(p.pic) }))
     : shuffle(topic.words).slice(0, 5).map((w) => ({ en: w.say, de: w.de, pic: w.pic, color: w.color, count: w.count }));
   let i = 0;
-  let rec = null;
   let alive = true;
-  let stream = null;
-  cleanup = () => {
-    alive = false;
-    if (rec && rec.state === 'recording') rec.stop();
-    if (stream) stream.getTracks().forEach((t) => t.stop());
-    playback.onended = null;
-    playback.pause();
-  };
-  const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  let stopRec = null;
+  cleanup = () => { alive = false; if (stopRec) stopRec(); };
 
   $app.appendChild(topbar({ back: () => (isPhrases ? show(renderHome) : show(renderTopic, topic)) }));
   $app.appendChild(h(`
@@ -624,38 +724,7 @@ function renderSpeak(topic) {
 
   listenBtn.onclick = () => { sfx.tap(); model(); };
 
-  if (micBtn) {
-    micBtn.onclick = async () => {
-      if (rec && rec.state === 'recording') { rec.stop(); return; }
-      stopSpeaking();
-      try {
-        stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-      } catch (e) {
-        micBtn.remove(); // kein Mikro erlaubt → nur Daumen-hoch-Weg
-        return;
-      }
-      const chunks = [];
-      rec = new MediaRecorder(stream);
-      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-      rec.onstop = async () => {
-        micBtn.classList.remove('recording');
-        micBtn.textContent = '🎤';
-        // Mikro schließen – sonst ist die Wiedergabe auf dem iPad sehr leise.
-        if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
-        if (!alive || !chunks.length) return;
-        const url = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || 'audio/mp4' }));
-        await wait(150);
-        playback.onended = () => { playback.onended = null; URL.revokeObjectURL(url); good(); };
-        playback.src = url;
-        const p = playback.play();
-        if (p && p.catch) p.catch(() => { playback.onended = null; good(); });
-      };
-      rec.start();
-      micBtn.classList.add('recording');
-      micBtn.textContent = '⏹️';
-      setTimeout(() => { if (rec && rec.state === 'recording') rec.stop(); }, 5000);
-    };
-  }
+  if (micBtn) stopRec = attachRecorder(micBtn, { isAlive: () => alive, onDone: () => good() });
 
   let advancing = false;
   async function good() {
@@ -682,6 +751,236 @@ function renderSpeak(topic) {
   okBtn.onclick = () => good();
 
   setTimeout(intro, 250);
+}
+
+// ---------- Stufe 3: Fragen & Antworten ----------
+// Eine Figur stellt eine Frage → Kind tippt die passende Antwort (Bild) →
+// hört die Antwort als Satz → sagt sie selbst (🎤 oder 👍).
+const QA_ROUNDS = 5;
+
+function hostBubble() {
+  return `
+    <div class="host">
+      <div class="host-pic"></div>
+      <button class="big-btn say-again bubble" aria-label="Frage nochmal hören">🔊</button>
+    </div>
+    <div class="host-de"></div>`;
+}
+
+function renderQA(topic) {
+  const s = topicState(topic.id);
+  const nOpts = s.listen === 0 ? 3 : 4;
+  let round = 0;
+  let item = null;
+  let host = rand(HOSTS);
+  let firstTry = true;
+  let locked = false;
+  let alive = true;
+  let stopRec = null;
+  cleanup = () => { alive = false; if (stopRec) stopRec(); };
+
+  $app.appendChild(topbar({ back: backTo(topic) }));
+  $app.appendChild(h(`
+    <div class="dots qa-dots">${Array.from({ length: QA_ROUNDS }, () => '<span></span>').join('')}</div>
+    ${hostBubble()}
+    <div class="options qa-options"></div>
+    <div class="big-btn parrot answer" hidden>
+      <div class="pic"></div>
+      <div class="phrase"></div>
+      <div class="de"></div>
+      <div class="row">
+        <button class="round-btn listen" aria-label="Antwort anhören">🔊</button>
+        ${canRecord ? '<button class="round-btn mic" aria-label="Aufnehmen">🎤</button>' : ''}
+        <button class="round-btn ok" aria-label="Gesagt">👍</button>
+      </div>
+    </div>`));
+
+  const hostPic = $app.querySelector('.host-pic');
+  const sayBtn = $app.querySelector('.bubble');
+  const hostDe = $app.querySelector('.host-de');
+  const opts = $app.querySelector('.qa-options');
+  const answerBox = $app.querySelector('.answer');
+  let chosen = null;
+
+  const ask = async () => {
+    sayBtn.classList.add('talking');
+    hostPic.classList.add('talking');
+    await speak(item.q, { pitch: host.pitch });
+    sayBtn.classList.remove('talking');
+    hostPic.classList.remove('talking');
+  };
+  sayBtn.onclick = () => { sfx.tap(); ask(); };
+
+  // Falsche Antworten kommen aus anderen Fragen desselben Themas.
+  function distractors(accepted) {
+    const taken = new Set(accepted.map((a) => fill(a.pic)).concat(NO));
+    const pool = [];
+    topic.items.forEach((it) => it.answers.forEach((a) => {
+      const p = fill(a.pic);
+      if (!taken.has(p)) { taken.add(p); pool.push(a); }
+    }));
+    return shuffle(pool);
+  }
+
+  function next() {
+    if (!alive) return;
+    $app.querySelectorAll('.qa-dots span').forEach((d, k) => d.classList.toggle('on', k < round));
+    if (round >= QA_ROUNDS) {
+      s.listen++;
+      save();
+      celebrate(backTo(topic));
+      return;
+    }
+    item = pickTarget(topic, item);
+    host = rand(HOSTS.filter((x) => x !== host));
+    hostPic.textContent = host.pic;
+    hostDe.textContent = state.settings.german ? item.de : '';
+    firstTry = true;
+    locked = false;
+    answerBox.hidden = true;
+    opts.hidden = false;
+    const accepted = item.answers;
+    const wrong = distractors(accepted).slice(0, Math.max(1, nOpts - accepted.length));
+    const choices = shuffle([...accepted.map((a) => ({ ...a, ok: true })), ...wrong.map((a) => ({ ...a, ok: false }))]);
+    opts.className = `options qa-options n${choices.length}`;
+    opts.innerHTML = choices.map((a, i) => `<button class="big-btn option" data-i="${i}" ${a.ok ? 'data-ok="1"' : ''} aria-label="${esc(fill(a.en))}">${esc(fill(a.pic))}</button>`).join('');
+    opts.querySelectorAll('.option').forEach((b) => { b.onclick = () => choose(b, choices[+b.dataset.i]); });
+    ask();
+  }
+
+  async function choose(btn, a) {
+    if (locked) return;
+    const st = wordStat(topic.id, item);
+    if (a.ok) {
+      locked = true;
+      chosen = a;
+      if (firstTry) st.right++;
+      save();
+      btn.classList.add('right');
+      opts.querySelectorAll('.option').forEach((b) => (b.disabled = true));
+      sfx.right();
+      praisePop('⭐');
+      await speak(`${rand(PRAISE)} You can say:`);
+      if (!alive) return;
+      showAnswer();
+    } else {
+      if (firstTry) { st.miss++; save(); }
+      btn.classList.add('wrong');
+      btn.disabled = true;
+      sfx.soft();
+      if (!firstTry) opts.querySelectorAll('.option[data-ok]').forEach((b) => b.classList.add('hint'));
+      firstTry = false;
+      await speak(rand(['Hmm, listen again!', 'Good try! Listen again.', 'Oops! Listen again.']));
+      if (alive && !locked) await ask();
+    }
+  }
+
+  // Antwort-Satz vorsprechen, dann ist das Kind dran.
+  async function showAnswer() {
+    opts.hidden = true;
+    answerBox.hidden = false;
+    answerBox.querySelector('.pic').textContent = fill(chosen.pic);
+    answerBox.querySelector('.phrase').textContent = fill(chosen.en);
+    answerBox.querySelector('.de').textContent = '';
+    await modelAnswer();
+    if (alive) await speak('Now you!');
+  }
+  const modelAnswer = () => speak(fill(chosen.en), { rate: Math.max(0.6, state.settings.rate - 0.1) });
+  answerBox.querySelector('.listen').onclick = () => { sfx.tap(); modelAnswer(); };
+
+  let advancing = false;
+  async function said() {
+    if (advancing || !alive) return;
+    advancing = true;
+    sfx.right();
+    praisePop(rand(['🌟', '🎉', '👏']));
+    addStars(2);
+    await speak(rand(PRAISE));
+    advancing = false;
+    round++;
+    if (alive) { await wait(300); next(); }
+  }
+  answerBox.querySelector('.ok').onclick = () => said();
+  const mic = answerBox.querySelector('.mic');
+  if (mic) stopRec = attachRecorder(mic, { isAlive: () => alive, onDone: said });
+
+  setTimeout(next, 300);
+}
+
+// ---------- Stufe 4: Mach mit! (Bewegung) ----------
+// Kind hört eine Anweisung und macht sie (springen, klatschen …). Das Bild kommt erst danach –
+// so zählt das Verstehen übers Ohr. Kein Richtig/Falsch: 👍 drücken (gern Mama/Papa).
+function renderMove(topic) {
+  const s = topicState(topic.id);
+  const items = shuffle(topic.items).slice(0, 6);
+  let i = 0;
+  let host = rand(HOSTS);
+  let alive = true;
+  let repeats = 0;
+  cleanup = () => { alive = false; };
+
+  $app.appendChild(topbar({ back: backTo(topic) }));
+  $app.appendChild(h(`
+    <div class="dots">${items.map(() => '<span></span>').join('')}</div>
+    ${hostBubble()}
+    <div class="big-btn parrot move">
+      <div class="pic mystery">❓</div>
+      <div class="phrase">&nbsp;</div>
+      <div class="row"><button class="round-btn ok" aria-label="Gemacht">👍</button></div>
+    </div>`));
+
+  const hostPic = $app.querySelector('.host-pic');
+  const sayBtn = $app.querySelector('.bubble');
+  const hostDe = $app.querySelector('.host-de');
+  const pic = $app.querySelector('.move .pic');
+  const phrase = $app.querySelector('.move .phrase');
+
+  const reveal = () => { pic.textContent = items[i].pic; pic.classList.remove('mystery'); phrase.textContent = items[i].cmd; };
+  async function say() {
+    sayBtn.classList.add('talking'); hostPic.classList.add('talking');
+    await speak(items[i].cmd, { pitch: host.pitch });
+    sayBtn.classList.remove('talking'); hostPic.classList.remove('talking');
+  }
+  sayBtn.onclick = () => { sfx.tap(); repeats++; if (repeats >= 2) reveal(); say(); };
+
+  function paint() {
+    $app.querySelectorAll('.dots span').forEach((d, k) => d.classList.toggle('on', k < i));
+    host = rand(HOSTS.filter((x) => x !== host));
+    hostPic.textContent = host.pic;
+    hostDe.textContent = '';
+    pic.textContent = '❓';
+    pic.classList.add('mystery');
+    phrase.innerHTML = '&nbsp;';
+    repeats = 0;
+  }
+
+  let advancing = false;
+  $app.querySelector('.move .ok').onclick = async () => {
+    if (advancing) return;
+    advancing = true;
+    reveal();
+    hostDe.textContent = state.settings.german ? items[i].de : '';
+    sfx.right();
+    praisePop(rand(['🌟', '🎉', '💪']));
+    wordStat(topic.id, items[i]).right++;
+    addStars(1);
+    await speak(`${rand(PRAISE)} ${items[i].cmd}`, { pitch: host.pitch });
+    i++;
+    advancing = false;
+    if (!alive) return;
+    if (i >= items.length) {
+      s.listen++;
+      save();
+      celebrate(backTo(topic));
+      return;
+    }
+    await wait(400);
+    paint();
+    say();
+  };
+
+  paint();
+  setTimeout(async () => { await speak('Listen, and do it!'); if (alive) say(); }, 300);
 }
 
 // ---------- Garage (Sticker-Sammlung) ----------
@@ -713,17 +1012,25 @@ function renderParent() {
     .filter(([, v]) => v.miss > 0)
     .sort((a, b) => b[1].miss - a[1].miss)
     .slice(0, 10);
-  const learned = Object.values(state.words).filter((v) => v.right >= 2).length;
-  const totalWords = TOPICS.reduce((n, t) => n + t.words.length, 0);
+  const learnedIn = (ts) => ts.reduce((n, t) => n + (t.words || t.items)
+    .filter((w) => (state.words[t.id + ':' + itemKey(w)] || {}).right >= 2).length, 0);
+  const countIn = (ts) => ts.reduce((n, t) => n + (t.words || t.items).length, 0);
+  const stageLine = STAGES.map((x) => `${x.n}. ${x.de}: ${state.settings.unlockAll || state.stars >= x.stars ? '✅ offen' : `🔒 ab ${x.stars} ⭐`}`).join(' · ');
 
   $app.appendChild(h(`
     <div class="parent">
       <h2>Eltern-Bereich</h2>
-      <p>⭐ ${state.stars} / ${STARS_TO_MICHIGAN} bis Michigan · ${learned} von ${totalWords} Wörtern mind. 2× sicher erkannt
-      ${daysLeft() !== null ? ` · noch ${daysLeft()} Tage bis zur Reise` : ''}</p>
+      <p>⭐ ${state.stars} / ${STARS_TO_MICHIGAN} bis Michigan${daysLeft() !== null ? ` · noch ${daysLeft()} Tage bis zur Reise` : ''}<br>
+      Mind. 2× auf Anhieb richtig: ${learnedIn(TOPICS)} / ${countIn(TOPICS)} Wörter ·
+      ${learnedIn(QA_TOPICS)} / ${countIn(QA_TOPICS)} Fragen ·
+      ${learnedIn(ACTION_TOPICS.filter((t) => t.type === 'pick'))} / ${countIn(ACTION_TOPICS.filter((t) => t.type === 'pick'))} Anweisungen<br>
+      ${stageLine}</p>
 
       <label for="name">Name des Kindes (wird im Spiel auf Englisch angesprochen)</label>
       <input id="name" type="text" value="${esc(st.name)}" placeholder="z. B. Max" autocomplete="off">
+
+      <label for="age">Alter (für „How old are you?“)</label>
+      <input id="age" type="text" inputmode="numeric" value="${esc(st.age)}">
 
       <label for="trip">Abflug-Datum</label>
       <input id="trip" type="date" value="${esc(st.tripDate)}">
@@ -739,10 +1046,16 @@ function renderParent() {
       <button class="btn" id="test">🔊 Stimme testen</button>
 
       <label class="check"><input id="german" type="checkbox" ${st.german ? 'checked' : ''}> Deutsche Hilfen anzeigen (🇩🇪-Knopf & Übersetzung)</label>
+      <label class="check"><input id="unlock" type="checkbox" ${st.unlockAll ? 'checked' : ''}> Alle Stufen sofort freischalten</label>
+
+      <h3>Liste für die Gastfamilie</h3>
+      <p>Genau diese Formulierungen übt er. Wenn die Gastfamilie sie <b>wortgleich und langsam</b> benutzt, erkennt er sie wieder.
+      Einfach teilen (z. B. per WhatsApp oder Mail).</p>
+      <button class="btn" id="share">📤 Liste teilen / kopieren</button>
 
       <h3>Schwierige Wörter</h3>
       ${tricky.length ? `<table><tr><th>Wort</th><th>Daneben</th><th>Richtig</th></tr>
-        ${tricky.map(([k, v]) => `<tr><td>${esc(k.split(':')[1])}</td><td>${v.miss}</td><td>${v.right}</td></tr>`).join('')}</table>`
+        ${tricky.map(([k, v]) => `<tr><td>${esc(k.slice(k.indexOf(':') + 1))}</td><td>${v.miss}</td><td>${v.right}</td></tr>`).join('')}</table>`
         : '<p>Noch keine – oder alles läuft rund.</p>'}
       <p>Diese Wörter kommen im Hör-Spiel automatisch häufiger dran. Am besten auch im Alltag benutzen („Where is the <b>truck</b>?“).</p>
 
@@ -766,6 +1079,15 @@ function renderParent() {
   $('#rate').oninput = (e) => { st.rate = +e.target.value; $('#rateV').textContent = st.rate.toFixed(2); save(); };
   $('#voice').onchange = (e) => { st.voice = e.target.value; save(); };
   $('#german').onchange = (e) => { st.german = e.target.checked; save(); };
+  $('#unlock').onchange = (e) => { st.unlockAll = e.target.checked; save(); };
+  $('#age').oninput = (e) => { const n = parseInt(e.target.value, 10); if (n > 0 && n < 15) { st.age = n; save(); } };
+  $('#share').onclick = async () => {
+    const text = hostFamilyList();
+    try {
+      if (navigator.share) { await navigator.share({ title: 'English phrases', text }); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(text); $('#share').textContent = '✅ Kopiert'; } catch (e) { prompt('Zum Kopieren:', text); }
+  };
   $('#test').onclick = () => speak(`Hello ${childName()}! The fire truck is red. Vroom vroom!`);
   $('#reset').onclick = () => {
     if (confirm('Wirklich alle Sterne und Sticker löschen?')) {
@@ -776,6 +1098,24 @@ function renderParent() {
       show(renderHome);
     }
   };
+}
+
+// Text für die Gastfamilie: alle Fragen, Antworten und Anweisungen aus der App.
+function hostFamilyList() {
+  const name = state.settings.name.trim() || 'our son';
+  const lines = [
+    `Hi! ${name} (${childAge()}) speaks German and is learning his first English with these phrases.`,
+    'It helps him a lot if you use exactly these words, slowly and with a smile. Thank you so much!',
+    '',
+    'QUESTIONS (and what he can answer):',
+  ];
+  QA_TOPICS.forEach((t) => t.items.forEach((it) => lines.push(`• ${it.q}  →  ${it.answers.map((a) => fill(a.en)).join(' / ')}`)));
+  lines.push('', 'THINGS YOU MIGHT ASK HIM TO DO:');
+  ACTION_TOPICS.forEach((t) => t.items.forEach((it) => lines.push(`• ${it.cmd}`)));
+  lines.push('', 'THINGS HE CAN SAY:');
+  PHRASES.forEach((p) => lines.push(`• ${fill(p.en)}`));
+  lines.push('', 'Words he knows: ' + TOPICS.map((t) => t.words.map((w) => w.en).join(', ')).join(', ') + '.');
+  return lines.join('\n');
 }
 
 // ---------- Offline-Unterstützung (z. B. im Flugzeug) ----------
