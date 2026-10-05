@@ -1,0 +1,12 @@
+{
+  "name": "Road to Michigan",
+  "short_name": "Michigan",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#bde9ff",
+  "theme_color": "#4fc3f7",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
