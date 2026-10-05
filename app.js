@@ -40,7 +40,7 @@ function wordStat(topicId, w) {
   const k = topicId + ':' + w.en;
   return state.words[k] || (state.words[k] = { seen: 0, right: 0, miss: 0 });
 }
-function today() { return new Date().toISOString().slice(0, 10); }
+function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 
 // ---------- Hilfen ----------
 const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -59,28 +59,39 @@ function h(html) {
 // ---------- Sprache ----------
 const synth = window.speechSynthesis;
 let voices = [];
-function loadVoices() { voices = synth ? synth.getVoices() : []; }
-if (synth) { loadVoices(); synth.onvoiceschanged = loadVoices; }
+// iOS bringt Spaß-Stimmen mit (Zarvox, Bubbles …) – die wollen wir nie automatisch wählen.
+const NOVELTY = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Junior|Ralph|Fred|Kathy|Grandma|Grandpa|Rocko|Shelley|Flo|Eddy|Reed|Sandy/i;
+function loadVoices() { voices = synth ? synth.getVoices().filter((v) => !NOVELTY.test(v.name)) : []; }
+if (synth) {
+  loadVoices();
+  if (synth.addEventListener) synth.addEventListener('voiceschanged', loadVoices);
+  else synth.onvoiceschanged = loadVoices;
+}
 
 function pickVoice(lang) {
+  if (!voices.length) loadVoices();
   if (lang === 'en' && state.settings.voice) {
     const v = voices.find((v) => v.name === state.settings.voice);
     if (v) return v;
   }
   const prefix = lang === 'de' ? 'de' : 'en-US';
   const pool = voices.filter((v) => v.lang.replace('_', '-').startsWith(prefix));
-  const nice = ['Samantha', 'Google US English', 'Microsoft Aria', 'Microsoft Jenny', 'Ava', 'Allison', 'Anna', 'Google Deutsch', 'Microsoft Katja'];
-  for (const n of nice) { const v = pool.find((v) => v.name.includes(n)); if (v) return v; }
-  return pool.find((v) => v.localService) || pool[0] ||
+  // Hochwertige iOS-Stimmen ("Premium"/"Enhanced") zuerst, dann bekannte gute Stimmen.
+  const better = pool.filter((v) => /Premium|Enhanced|Erweitert/i.test(v.name));
+  const nice = ['Samantha', 'Ava', 'Allison', 'Susan', 'Google US English', 'Microsoft Aria', 'Microsoft Jenny', 'Anna', 'Helena', 'Google Deutsch', 'Microsoft Katja'];
+  for (const list of [better, pool]) {
+    for (const n of nice) { const v = list.find((v) => v.name.includes(n)); if (v) return v; }
+  }
+  return better[0] || pool.find((v) => v.localService) || pool[0] ||
     voices.find((v) => v.lang.startsWith(lang)) || null;
 }
 
 let speakToken = 0;
+let currentUtterance = null; // Referenz halten – Safari verliert sonst onend (Garbage Collection)
 function speak(text, { lang = 'en', rate } = {}) {
   return new Promise((resolve) => {
     if (!synth) { resolve(); return; }
     const token = ++speakToken;
-    synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
     const v = pickVoice(lang);
     if (v) u.voice = v;
@@ -92,11 +103,29 @@ function speak(text, { lang = 'en', rate } = {}) {
     u.onend = finish;
     u.onerror = finish;
     // Sicherheitsnetz: manche Browser feuern onend nicht zuverlässig
-    setTimeout(finish, 1200 + text.length * 110);
-    synth.speak(u);
+    setTimeout(finish, 1500 + text.length * 120);
+    currentUtterance = u;
+    // Safari verschluckt eine Äußerung, die direkt nach cancel() startet – kurz warten.
+    if (synth.speaking || synth.pending) {
+      synth.cancel();
+      setTimeout(() => { if (token === speakToken) synth.speak(u); else finish(); }, 80);
+    } else {
+      synth.speak(u);
+    }
   });
 }
 function stopSpeaking() { speakToken++; if (synth) synth.cancel(); }
+
+// Ein Audio-Element für die eigenen Aufnahmen. iOS erlaubt play() nur, wenn das Element
+// einmal in einer Nutzer-Geste gestartet wurde – das passiert beim Start-Knopf.
+const playback = new Audio();
+playback.setAttribute('playsinline', '');
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+function unlockPlayback() {
+  playback.src = SILENT_WAV;
+  const p = playback.play();
+  if (p && p.catch) p.catch(() => {});
+}
 
 // ---------- Soundeffekte (WebAudio, keine Dateien nötig) ----------
 let actx = null;
@@ -281,6 +310,8 @@ function renderStart() {
     </div>`));
   $app.querySelector('.play').onclick = () => {
     audio(); sfx.vroom();
+    unlockPlayback();
+    loadVoices();
     // iOS: Sprachausgabe muss in einer Nutzer-Geste "aufgeweckt" werden.
     if (synth) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u); }
     show(renderHome, true);
@@ -549,6 +580,8 @@ function renderSpeak(topic) {
     alive = false;
     if (rec && rec.state === 'recording') rec.stop();
     if (stream) stream.getTracks().forEach((t) => t.stop());
+    playback.onended = null;
+    playback.pause();
   };
   const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
@@ -596,7 +629,7 @@ function renderSpeak(topic) {
       if (rec && rec.state === 'recording') { rec.stop(); return; }
       stopSpeaking();
       try {
-        stream = stream || await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
       } catch (e) {
         micBtn.remove(); // kein Mikro erlaubt → nur Daumen-hoch-Weg
         return;
@@ -607,11 +640,15 @@ function renderSpeak(topic) {
       rec.onstop = async () => {
         micBtn.classList.remove('recording');
         micBtn.textContent = '🎤';
+        // Mikro schließen – sonst ist die Wiedergabe auf dem iPad sehr leise.
+        if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
         if (!alive || !chunks.length) return;
-        const url = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType }));
-        const player = new Audio(url);
-        player.onended = () => { URL.revokeObjectURL(url); good(); };
-        player.play().catch(() => good());
+        const url = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || 'audio/mp4' }));
+        await wait(150);
+        playback.onended = () => { playback.onended = null; URL.revokeObjectURL(url); good(); };
+        playback.src = url;
+        const p = playback.play();
+        if (p && p.catch) p.catch(() => { playback.onended = null; good(); });
       };
       rec.start();
       micBtn.classList.add('recording');
@@ -669,6 +706,7 @@ function renderGarage() {
 function renderParent() {
   $app.appendChild(topbar({ back: () => show(renderHome) }));
   const st = state.settings;
+  loadVoices();
   const enVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
   const dayKeys = Object.keys(state.days).sort().slice(-14);
   const tricky = Object.entries(state.words)

@@ -34,15 +34,8 @@ python3 -m http.server 8000
 # dann http://localhost:8000 öffnen
 ```
 
-Für Tablet oder Handy am einfachsten über **GitHub Pages** veröffentlichen
-(Repo → Settings → Pages → Branch wählen). Danach im Browser „Zum Home-Bildschirm hinzufügen“.
-HTTPS ist nötig, damit Mikrofon und Offline-Modus funktionieren.
-
-**Hinweise:**
-- iPad/iPhone (Safari) haben meist die besten englischen Stimmen. Im Eltern-Bereich kann man eine
-  Stimme auswählen, z. B. „Samantha“. Unter iOS → Einstellungen → Bedienungshilfen → Gesprochene
-  Inhalte → Stimmen lassen sich bessere Stimmen kostenlos herunterladen.
-- Die App funktioniert nach dem ersten Öffnen auch offline, z. B. im Flugzeug.
+**Live bringen und aufs iPad:** siehe [ANLEITUNG.md](ANLEITUNG.md) (GitHub Pages, Home-Bildschirm,
+bessere Stimme, Offline für den Flug).
 
 ## Inhalte anpassen
 

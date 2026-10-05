@@ -1,6 +1,6 @@
 // Einfacher Offline-Cache, damit die App auch im Flugzeug läuft.
-const CACHE = 'road-to-michigan-v1';
-const FILES = ['./', './index.html', './style.css', './data.js', './app.js', './manifest.json', './icon.svg'];
+const CACHE = 'road-to-michigan-v2';
+const FILES = ['./', './index.html', './style.css', './data.js', './app.js', './manifest.json', './icon.svg', './apple-touch-icon.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
