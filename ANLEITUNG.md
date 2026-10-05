@@ -16,7 +16,7 @@ Im Code stehen keine persönlichen Daten. Name und Fortschritt deines Sohnes wer
 ## 2. GitHub Pages einschalten
 
 **Settings** → **Pages** → bei „Source“ **Deploy from a branch** wählen →
-Branch **`claude/english-learning-app-kids-fwk5k4`**, Ordner **`/ (root)`** → **Save**.
+Branch **`main`**, Ordner **`/ (root)`** → **Save**.
 
 Nach 1–2 Minuten ist die App online unter:
 **https://ckurtzmann-maker.github.io/English-Game/**
