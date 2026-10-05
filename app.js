@@ -64,9 +64,31 @@ function h(html) {
 // ---------- Sprache ----------
 const synth = window.speechSynthesis;
 let voices = [];
-// iOS bringt Spaß-Stimmen mit (Zarvox, Bubbles …) – die wollen wir nie automatisch wählen.
-const NOVELTY = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Junior|Ralph|Fred|Kathy|Grandma|Grandpa|Rocko|Shelley|Flo|Eddy|Reed|Sandy/i;
-function loadVoices() { voices = synth ? synth.getVoices().filter((v) => !NOVELTY.test(v.name)) : []; }
+// iOS bringt Spaß-Stimmen mit (Glocken, Seifenblasen, Zarvox …). Ihre Namen sind übersetzt,
+// deshalb erkennen wir sie vor allem an der internen Kennung (voiceURI):
+//   Spaß-Stimmen:      com.apple.speech.synthesis.voice.Bells
+//   Eloquence-Stimmen: com.apple.eloquence.en-US.Rocko
+//   normale Stimmen:   com.apple.voice.compact|enhanced|premium.en-US.Samantha
+const NOVELTY_URI = /speech\.synthesis\.voice|eloquence/i;
+const NOVELTY_NAME = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Junior|Ralph|Fred|Kathy|Grandma|Grandpa|Rocko|Shelley|\bFlo\b|Eddy|Reed|Sandy|Neuigkeiten|Glocken|Seifenblasen|Celli|Orgel|Flüster|Wackel|Hofnarr|Spaßvogel/i;
+const isNovelty = (v) => NOVELTY_URI.test(v.voiceURI || '') || NOVELTY_NAME.test(v.name);
+// Qualität aus der Kennung: premium > enhanced (= „Erweitert“) > compact.
+const voiceQuality = (v) => {
+  const id = (v.voiceURI || '') + ' ' + v.name;
+  if (/premium/i.test(id)) return 3;
+  if (/enhanced|erweitert/i.test(id)) return 2;
+  return 1;
+};
+const QUALITY_LABEL = { 3: 'Premium', 2: 'Erweitert', 1: 'Standard' };
+function loadVoices() {
+  const seen = new Set();
+  voices = synth ? synth.getVoices().filter((v) => {
+    const key = v.voiceURI || v.name + v.lang;
+    if (isNovelty(v) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }) : [];
+}
 if (synth) {
   loadVoices();
   if (synth.addEventListener) synth.addEventListener('voiceschanged', loadVoices);
@@ -76,13 +98,13 @@ if (synth) {
 function pickVoice(lang) {
   if (!voices.length) loadVoices();
   if (lang === 'en' && state.settings.voice) {
-    const v = voices.find((v) => v.name === state.settings.voice);
+    const v = voices.find((v) => v.voiceURI === state.settings.voice) || voices.find((v) => v.name === state.settings.voice);
     if (v) return v;
   }
   const prefix = lang === 'de' ? 'de' : 'en-US';
   const pool = voices.filter((v) => v.lang.replace('_', '-').startsWith(prefix));
-  // Hochwertige iOS-Stimmen ("Premium"/"Enhanced") zuerst, dann bekannte gute Stimmen.
-  const better = pool.filter((v) => /Premium|Enhanced|Erweitert/i.test(v.name));
+  // Hochwertige iOS-Stimmen (Premium/Erweitert) zuerst, dann bekannte gute Stimmen.
+  const better = pool.filter((v) => voiceQuality(v) >= 2).sort((a, b) => voiceQuality(b) - voiceQuality(a));
   const nice = ['Samantha', 'Ava', 'Allison', 'Susan', 'Google US English', 'Microsoft Aria', 'Microsoft Jenny', 'Anna', 'Helena', 'Google Deutsch', 'Microsoft Katja'];
   for (const list of [better, pool]) {
     for (const n of nice) { const v = list.find((v) => v.name.includes(n)); if (v) return v; }
@@ -811,14 +833,16 @@ function renderQA(topic) {
   };
   sayBtn.onclick = () => { sfx.tap(); ask(); };
 
-  // Falsche Antworten kommen aus anderen Fragen desselben Themas.
+  // Falsche Antworten kommen aus den ANDEREN Fragen-Themen: innerhalb eines Themas wären sie
+  // oft auch sinnvoll (🍪 auf „Do you want to eat?“) – das wäre unfair. item.avoid schließt
+  // die restlichen Überschneidungen aus.
   function distractors(accepted) {
-    const taken = new Set(accepted.map((a) => fill(a.pic)).concat(NO));
+    const taken = new Set(accepted.map((a) => fill(a.pic)).concat(NO, item.avoid || []));
     const pool = [];
-    topic.items.forEach((it) => it.answers.forEach((a) => {
+    QA_TOPICS.filter((t) => t !== topic).forEach((t) => t.items.forEach((it) => it.answers.forEach((a) => {
       const p = fill(a.pic);
       if (!taken.has(p)) { taken.add(p); pool.push(a); }
-    }));
+    })));
     return shuffle(pool);
   }
 
@@ -1006,7 +1030,10 @@ function renderParent() {
   $app.appendChild(topbar({ back: () => show(renderHome) }));
   const st = state.settings;
   loadVoices();
-  const enVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
+  // US-Stimmen zuerst, dann nach Qualität; gleichnamige Stimmen werden durch die Qualität unterscheidbar.
+  const enVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('en')).sort((a, b) =>
+    (b.lang.includes('US') - a.lang.includes('US')) || (voiceQuality(b) - voiceQuality(a)) || a.name.localeCompare(b.name));
+  const current = pickVoice('en');
   const dayKeys = Object.keys(state.days).sort().slice(-14);
   const tricky = Object.entries(state.words)
     .filter(([, v]) => v.miss > 0)
@@ -1040,10 +1067,12 @@ function renderParent() {
 
       <label for="voice">Englische Stimme</label>
       <select id="voice">
-        <option value="">Automatisch (US-Englisch bevorzugt)</option>
-        ${enVoices.map((v) => `<option value="${esc(v.name)}" ${v.name === st.voice ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}
+        <option value="">Automatisch${!st.voice && current ? ` (jetzt: ${esc(current.name)} · ${QUALITY_LABEL[voiceQuality(current)]})` : ''}</option>
+        ${enVoices.map((v) => `<option value="${esc(v.voiceURI || v.name)}" ${st.voice && current === v ? 'selected' : ''}>${esc(v.name)} · ${esc(v.lang)} · ${QUALITY_LABEL[voiceQuality(v)]}</option>`).join('')}
       </select>
       <button class="btn" id="test">🔊 Stimme testen</button>
+      <p>Tipp: „Erweitert“ klingt deutlich natürlicher als „Standard“. Premium-Stimmen (z. B. Ava) gibt iOS
+      nach unserem Kenntnisstand nicht an Webseiten weiter – „Samantha · Erweitert“ ist meist die beste Wahl.</p>
 
       <label class="check"><input id="german" type="checkbox" ${st.german ? 'checked' : ''}> Deutsche Hilfen anzeigen (🇩🇪-Knopf & Übersetzung)</label>
       <label class="check"><input id="unlock" type="checkbox" ${st.unlockAll ? 'checked' : ''}> Alle Stufen sofort freischalten</label>
